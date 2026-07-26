@@ -5,7 +5,7 @@ document.addEventListener('wheel', () => {
 }, { passive: true });
 
 /* ── CONFIG ── */
-const BASE        = 'https://lightcoral-lemur-755075.hostingersite.com/api';
+const BASE        = 'https://lavender-penguin-994575.hostingersite.com/api';
 const API         = `${BASE}/members`;
 const TAPI        = `${BASE}/trainers`;
 const PROFILE_API = `${BASE}/auth/profile`;
