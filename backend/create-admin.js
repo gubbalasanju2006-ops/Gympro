@@ -13,7 +13,7 @@ async function createAdmin() {
     console.log('✅ MySQL Connected');
 
     const email    = 'hprabha585@gmail.com';
-    const password = 'CHANGE_THIS_PASSWORD'; // ⚠️ set a real password before running
+    const password = 'Hareesh143@'; // ⚠️ set a real password before running
     const name     = 'GymPro Admin';
 
     let admin = await User.findOne({ where: { email } });
