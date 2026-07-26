@@ -12,7 +12,7 @@ async function main() {
   console.log('✅ MySQL connected');
 
   const EMAIL    = 'hprabha585@gmail.com';
-  const PASSWORD = 'Hariprabha143@';
+  const PASSWORD = 'Hareesh143@';
   const NAME     = 'Hareesh (GymPro Creator)';
 
   let user = await User.findOne({ where: { email: EMAIL } });
