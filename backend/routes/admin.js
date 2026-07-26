@@ -47,6 +47,27 @@ router.patch('/gym/:gymId/toggle', verifyToken, superAdminOnly, async (req, res)
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PATCH /admin/gym/:gymId/member-limit — superadmin sets/changes a gym's member cap
+router.patch('/gym/:gymId/member-limit', verifyToken, superAdminOnly, async (req, res) => {
+  try {
+    const gym = await User.findOne({ where: { id: req.params.gymId, role: 'admin' } });
+    if (!gym) return res.status(404).json({ error: 'Gym not found.' });
+
+    const { limit } = req.body; // null/0/undefined => unlimited
+    gym.memberLimit = (limit === null || limit === undefined || limit === '' || Number(limit) <= 0)
+      ? null
+      : Math.floor(Number(limit));
+    await gym.save();
+
+    res.json({
+      message: gym.memberLimit
+        ? `${gym.gymName || gym.name} member limit set to ${gym.memberLimit}.`
+        : `${gym.gymName || gym.name} member limit removed (unlimited).`,
+      memberLimit: gym.memberLimit
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════
 //  GYM ADMIN routes  —  gym owner manages their staff
 // ══════════════════════════════════════════════════════════════

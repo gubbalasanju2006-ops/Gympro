@@ -243,6 +243,10 @@
           <span>Total Revenue</span>
           <span id="revGrandTotal" style="color:#1A8C8C;font-size:.9rem">₹0</span>
         </span>
+        <span style="font-weight:800;color:#27AE60;padding-top:4px">
+          <span>🗓️ Today's Collection</span>
+          <span id="revTodayTotal" style="color:#27AE60;font-size:.9rem">₹0</span>
+        </span>
       </div>
     </div>
 
@@ -488,12 +492,28 @@
         style="flex:1;border:none;outline:none;font-family:inherit;font-size:.88rem;color:#1A2E2E;background:transparent">
       <button onclick="document.getElementById('revenueSearch').value='';filterRevenue()" style="border:none;background:none;cursor:pointer;color:#8AABAB;font-size:.8rem;font-weight:700">Clear</button>
     </div>
+    <div style="background:#fff;border-radius:14px;padding:12px 14px;margin-bottom:10px;border:1px solid #E0ECEC;box-shadow:0 2px 8px rgba(0,0,0,.04)">
+      <div style="font-size:.65rem;font-weight:800;color:#8AABAB;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📅 Filter by payment date</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px">
+          <label style="font-size:.62rem;font-weight:700;color:#4A6464;display:block;margin-bottom:3px">From</label>
+          <input id="revenueFromDate" type="date" style="width:100%;padding:8px 10px;border:2px solid #E0ECEC;border-radius:10px;font-family:inherit;font-size:.8rem;color:#1A2E2E">
+        </div>
+        <div style="flex:1;min-width:120px">
+          <label style="font-size:.62rem;font-weight:700;color:#4A6464;display:block;margin-bottom:3px">To</label>
+          <input id="revenueToDate" type="date" style="width:100%;padding:8px 10px;border:2px solid #E0ECEC;border-radius:10px;font-family:inherit;font-size:.8rem;color:#1A2E2E">
+        </div>
+        <button onclick="applyRevenueDateFilter()" style="padding:9px 16px;border:none;border-radius:10px;background:#1A8C8C;color:#fff;font-weight:800;font-size:.78rem;cursor:pointer;margin-top:16px">Apply</button>
+        <button onclick="clearRevenueDateFilter()" style="padding:9px 16px;border:1px solid #E0ECEC;border-radius:10px;background:#F0F5F5;color:#4A6464;font-weight:800;font-size:.78rem;cursor:pointer;margin-top:16px">Clear</button>
+      </div>
+    </div>
     <div class="card">
       <div class="card-head"><span class="card-title">📈 Revenue Dashboard</span></div>
       <div style="padding:16px">
         <div id="revenueDetailed"></div>
       </div>
     </div>
+
   </div>
 
   <!-- ──────────────── SETTINGS ──────────────── -->
@@ -794,10 +814,10 @@
             <input type="text" id="mAdmFee" inputmode="decimal" placeholder="e.g. 500">
           </div>
           <div class="form-group">
-            <label>Waive Fee?</label>
+            <label>Collect Admission Fee?</label>
             <select id="mWaive">
-              <option value="no">No — Collect</option>
-              <option value="yes">Yes — Waive</option>
+              <option value="yes">Yes — Collect</option>
+              <option value="no">No — Don't Collect</option>
             </select>
           </div>
         </div>
@@ -965,8 +985,8 @@
         <h4>🎟️ Admission Fee</h4>
         <div class="form-grid">
           <div class="form-group"><label>Amount (₹)</label><input type="text" id="eAdmFee" inputmode="decimal"></div>
-          <div class="form-group"><label>Waive Fee?</label>
-            <select id="eWaive"><option value="no">No — Collect</option><option value="yes">Yes — Waive</option></select>
+          <div class="form-group"><label>Collect Admission Fee?</label>
+            <select id="eWaive"><option value="yes">Yes — Collect</option><option value="no">No — Don't Collect</option></select>
           </div>
         </div>
       </div>

@@ -28,6 +28,10 @@ const User = sequelize.define('User', {
 
   gymName: { type: DataTypes.STRING, defaultValue: '' },
 
+  // Max members this gym can add, set by superadmin. NULL = unlimited.
+  // Editable anytime from the superadmin dashboard.
+  memberLimit: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
+
   staffPermissions: {
     type: DataTypes.JSON,
     defaultValue: {

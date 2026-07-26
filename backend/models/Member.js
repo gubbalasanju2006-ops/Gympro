@@ -50,6 +50,10 @@ const Member = sequelize.define('Member', {
 
   status: { type: DataTypes.ENUM('Active', 'Trial', 'Inactive', 'Expired'), defaultValue: 'Active' },
 
+  // Outstanding balance when a member pays less than the full amount due
+  // (e.g. pays half now, rest later). 0 = fully paid up.
+  pendingAmount: { type: DataTypes.FLOAT, defaultValue: 0 },
+
   // Auto-assigned sequential member number per gym
   memberNo: { type: DataTypes.INTEGER, allowNull: true }
 }, {

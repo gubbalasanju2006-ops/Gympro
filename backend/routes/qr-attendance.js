@@ -22,7 +22,7 @@ router.get('/gym-qr', authMiddleware, async (req, res) => {
     const encodedData = Buffer.from(JSON.stringify(qrData)).toString('base64');
 
     // ⚠️ Update this to your new domain once you move off Render
-    const checkinUrl = `https://YOUR-DOMAIN.com/member-checkin.html?qr=${encodeURIComponent(encodedData)}`;
+    const checkinUrl = `https://lightcoral-lemur-755075.hostingersite.com/member-checkin.html?qr=${encodeURIComponent(encodedData)}`;
 
     res.json({
       qrString: checkinUrl,
@@ -57,7 +57,13 @@ router.post('/member-checkin', async (req, res) => {
 
     let member;
     if (memberId) {
-      member = await Member.findOne({ where: { id: memberId, userId: gymId } });
+      // The number shown to members on their card is memberNo (e.g. "ID #1002"),
+      // not the internal database id — match on memberNo first, fall back to id
+      // so both the friendly displayed number and a raw id still work.
+      member = await Member.findOne({ where: { memberNo: memberId, userId: gymId } });
+      if (!member) {
+        member = await Member.findOne({ where: { id: memberId, userId: gymId } });
+      }
     } else if (phoneNumber) {
       const cleanPhone = String(phoneNumber).replace(/[^0-9]/g, '');
       member = await Member.findOne({ where: { phone: cleanPhone, userId: gymId } });
@@ -143,7 +149,10 @@ router.post('/my-attendance', async (req, res) => {
 
     let member;
     if (memberId) {
-      member = await Member.findOne({ where: { id: memberId, userId: gymId } });
+      member = await Member.findOne({ where: { memberNo: memberId, userId: gymId } });
+      if (!member) {
+        member = await Member.findOne({ where: { id: memberId, userId: gymId } });
+      }
     } else if (phoneNumber) {
       const cleanPhone = String(phoneNumber).replace(/[^0-9]/g, '');
       member = await Member.findOne({ where: { phone: cleanPhone, userId: gymId } });

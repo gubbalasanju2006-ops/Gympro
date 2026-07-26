@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Op } = require('sequelize');
-const { Member, Attendance } = require('../models');
+const { Member, Attendance, User } = require('../models');
 const authMiddleware = require('../middleware/auth');
 
 router.use(authMiddleware);
@@ -69,6 +69,17 @@ router.post('/', async (req, res) => {
 
     const photoErr = checkPhotoSize(memberData.photo);
     if (photoErr) return res.status(400).json({ error: photoErr });
+
+    // Enforce the member limit the superadmin set for this gym (if any)
+    const gymOwner = await User.findByPk(gymId);
+    if (gymOwner && gymOwner.memberLimit) {
+      const currentCount = await Member.count({ where: { userId: gymId } });
+      if (currentCount >= gymOwner.memberLimit) {
+        return res.status(403).json({
+          error: `Member limit reached (${gymOwner.memberLimit} members). Contact GymPro support to increase your limit.`
+        });
+      }
+    }
 
     const existingMember = await Member.findOne({ where: { userId: gymId, phone: memberData.phone } });
     if (existingMember) {

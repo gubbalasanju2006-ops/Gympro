@@ -5,7 +5,7 @@ document.addEventListener('wheel', () => {
 }, { passive: true });
 
 /* ── CONFIG ── */
-const BASE        = 'https://YOUR-DOMAIN.com/api';
+const BASE        = 'https://lightcoral-lemur-755075.hostingersite.com/api';
 const API         = `${BASE}/members`;
 const TAPI        = `${BASE}/trainers`;
 const PROFILE_API = `${BASE}/auth/profile`;
@@ -25,6 +25,15 @@ const DEFAULT_PLANS = [
 let gymPlans   = [...DEFAULT_PLANS];
 let gymDisc    = [];
 let gymCfg     = {};
+
+// The name the logged-in gym owner set for their gym — used in WhatsApp
+// messages instead of the app's own name ("GymPro").
+function getGymName() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || '{}');
+    return (u.gymName && u.gymName.trim()) || 'Our Gym';
+  } catch (e) { return 'Our Gym'; }
+}
 let trainerMap = {};
 
 let curPayMember = null;
@@ -464,6 +473,45 @@ function calculateRevenue(members) {
 }
 
 /* ── DASHBOARD ── */
+/* Sums payments whose date falls on a given day (default: today). Used
+   for the "Today's Collection" figures on the Home and Revenue pages. */
+function getRevenueForDate(members, dateStr) {
+  let total = 0, online = 0, cash = 0;
+  members.forEach(m => {
+    (m.paymentHistory || []).forEach(p => {
+      if (!p.date) return;
+      const d = new Date(p.date).toISOString().split('T')[0];
+      if (d !== dateStr) return;
+      const amt = p.amount || 0;
+      total += amt;
+      if ((p.method || 'cash') === 'cash') cash += amt; else online += amt;
+    });
+  });
+  return { total, online, cash };
+}
+
+/* Sums payments within an inclusive date range (both 'YYYY-MM-DD' strings).
+   Used by the Revenue page's From/To filter. */
+function getRevenueInRange(members, fromStr, toStr) {
+  const out = { total: 0, online: 0, cash: 0, plan: 0, admission: 0, pt: 0, entries: [] };
+  members.forEach(m => {
+    (m.paymentHistory || []).forEach(p => {
+      if (!p.date) return;
+      const d = new Date(p.date).toISOString().split('T')[0];
+      if (fromStr && d < fromStr) return;
+      if (toStr && d > toStr) return;
+      const amt = p.amount || 0;
+      out.total += amt;
+      if ((p.method || 'cash') === 'cash') out.cash += amt; else out.online += amt;
+      if (p.type === 'admission') out.admission += amt;
+      else if (p.type === 'pt') out.pt += amt;
+      else out.plan += amt;
+      out.entries.push({ member: m, payment: p });
+    });
+  });
+  return out;
+}
+
 function renderRevenueDashboard(revenue) {
   const today = new Date();
   const monthLabels = [];
@@ -508,14 +556,23 @@ function renderDashTable(membersList) {
     return;
   }
   tbody.innerHTML = membersList.map(m => {
-    let expLabel = '\u2014', expColor = '#8AABAB';
+    let expLabel = '\u2014', expColor = '#8AABAB', urgencyBg = '#F0F5F5', urgencyText = '';
     if (m.expiryDate) {
       const p = m.expiryDate.split('T')[0].split('-');
       const exp = new Date(+p[0], +p[1]-1, +p[2]);
       const today = new Date(); today.setHours(0,0,0,0);
       const days = Math.ceil((exp - today) / 86400000);
       expLabel = exp.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
-      expColor = days <= 0 ? '#E74C3C' : days <= 3 ? '#E74C3C' : days <= 7 ? '#F39C12' : '#27AE60';
+      if (days <= 3) {
+        expColor = '#E74C3C'; urgencyBg = '#FEECEB';
+        urgencyText = days < 0 ? `Expired ${Math.abs(days)}d ago` : days === 0 ? 'Expires today' : `${days}d left`;
+      } else if (days <= 7) {
+        expColor = '#F39C12'; urgencyBg = '#FEF6E7';
+        urgencyText = `${days}d left`;
+      } else {
+        expColor = '#27AE60'; urgencyBg = '#E8F8EF';
+        urgencyText = `${days}d left`;
+      }
     }
     const stClr = {Active:'#27AE60',Trial:'#2980B9',Inactive:'#95A5A6',Expired:'#E74C3C'};
     const stBg = {Active:'#E8F8EF',Trial:'#E3F2FD',Inactive:'#F3F4F6',Expired:'#FEECEB'};
@@ -524,7 +581,8 @@ function renderDashTable(membersList) {
     const safePhone_d = esc(m.phone||'');
     const safeId_d = esc(m._id);
     const safeName_d = esc(m.name||'');
-    return `<div style="border-bottom:2px solid #F0F5F5;overflow:hidden;background:#fff">
+    const dueAmt = Number(m.pendingAmount) || 0;
+    return `<div style="border-radius:16px;overflow:hidden;background:#fff;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);border-left:6px solid ${expColor};${dueAmt > 0 ? 'border-right:6px solid #E91E63;' : ''}">
       <!-- Top info row: full-width, photo + details + expiry -->
       <div style="display:flex;align-items:stretch;gap:0;padding:0">
         <!-- Photo -->
@@ -532,17 +590,18 @@ function renderDashTable(membersList) {
           ${avImgDash(m)}
         </div>
         <!-- Details -->
-        <div style="flex:1;min-width:0;padding:10px 6px 8px 0" onclick="openEditMember('${safeId_d}')">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <div style="flex:1;min-width:0;padding:10px 10px 8px 0;display:flex;flex-direction:column;justify-content:center;gap:3px" onclick="openEditMember('${safeId_d}')">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:1px">
             <span style="font-weight:800;font-size:1rem;color:#1A2E2E;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${safeName_d}</span>
             <span style="font-size:.6rem;font-weight:800;color:#fff;background:#1A8C8C;padding:1px 6px;border-radius:7px;white-space:nowrap;flex-shrink:0">ID #${m.memberNo||''}</span>
           </div>
-          <div style="font-size:.78rem;color:#4A6464;font-weight:600;margin-bottom:2px">📱 +91 ${safePhone_d}</div>
-          <div style="font-size:.72rem;color:#8AABAB;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.plan||'')}</div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="width:7px;height:7px;border-radius:50%;background:${expColor};flex-shrink:0"></span>
-            <span style="font-size:.75rem;font-weight:700;color:#1A2E2E">${expLabel}</span>
-            <span style="background:${sb};color:${sc};padding:2px 8px;border-radius:14px;font-size:.62rem;font-weight:800;margin-left:2px">${esc(m.status||'')}</span>
+          <div style="font-size:.78rem;color:#4A6464;font-weight:600">📱 +91 ${safePhone_d}</div>
+          <div style="font-size:.72rem;color:#8AABAB;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.plan||'')}</div>
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
+            <span style="background:${urgencyBg};color:${expColor};padding:2px 8px;border-radius:14px;font-size:.65rem;font-weight:800;white-space:nowrap">⏰ ${urgencyText || expLabel}</span>
+            <span style="font-size:.7rem;font-weight:700;color:#4A6464">${expLabel}</span>
+            <span style="background:${sb};color:${sc};padding:2px 8px;border-radius:14px;font-size:.62rem;font-weight:800">${esc(m.status||'')}</span>
+            ${dueAmt > 0 ? `<span style="background:#FCE4EC;color:#E91E63;padding:3px 9px;border-radius:14px;font-size:.65rem;font-weight:800;border:1px solid #E91E63">💰 Due ₹${dueAmt.toLocaleString('en-IN')}</span>` : ''}
           </div>
         </div>
       </div>
@@ -626,6 +685,11 @@ async function loadDashboard() {
     const revenue = calculateRevenue(members);
     renderRevenueDashboard(revenue);
 
+    const todayStr = getLocalTodayStr();
+    const todayRev = getRevenueForDate(members, todayStr);
+    const revTodayEl = document.getElementById('revTodayTotal');
+    if (revTodayEl) revTodayEl.textContent = `₹${todayRev.total.toLocaleString('en-IN')}`;
+
     const today = new Date();
     today.setHours(0,0,0,0);
     const in7Days = new Date(today);
@@ -652,7 +716,19 @@ async function loadDashboard() {
     }
 
     dashMembersCache = sorted;
-    renderDashTable(sorted.slice(0,8));
+    // Default dashboard view: only members expiring within 7 days (or already
+    // overdue) — the ones that actually need attention — instead of an
+    // arbitrary "first 8" slice. The 3d/5d/7d/All buttons still work as before.
+    const todayDT = new Date(); todayDT.setHours(0,0,0,0);
+    const sevenDaysOut = new Date(todayDT); sevenDaysOut.setDate(todayDT.getDate() + 7); sevenDaysOut.setHours(23,59,59,999);
+    const urgentDefault = sorted.filter(m => {
+      if (m.status !== 'Active' && m.status !== 'Trial') return false;
+      if (!m.expiryDate) return false;
+      const p = m.expiryDate.split('T')[0].split('-');
+      const exp = new Date(+p[0], +p[1]-1, +p[2]);
+      return exp <= sevenDaysOut; // includes overdue/expired too — most urgent first
+    });
+    renderDashTable(urgentDefault);
     _fillExtraDashTiles(members);
 
   } catch(e) { 
@@ -827,7 +903,7 @@ async function openEditMember(id) {
 
     document.getElementById('eExpiry').value = member.expiryDate ? member.expiryDate.split('T')[0] : '';
     document.getElementById('eAdmFee').value  = member.admissionFee || '';
-    document.getElementById('eWaive').value   = member.admissionWaived ? 'yes' : 'no';
+    document.getElementById('eWaive').value   = member.admissionWaived ? 'no' : 'yes';
 
     const ptEn = !!member.ptEnabled;
     document.getElementById('ePtEnabled').checked = ptEn;
@@ -879,7 +955,7 @@ document.getElementById('editMemberForm')?.addEventListener('submit', async e =>
   else if (dType==='fixed' && dVal>0) finalPrice = Math.max(0, Math.round(origPrice-dVal));
 
   const admFee = parseFloat(document.getElementById('eAdmFee').value||0) || 0;
-  const admWaived = document.getElementById('eWaive').value==='yes';
+  const admWaived = document.getElementById('eWaive').value==='no';
   const ptEnabled = document.getElementById('ePtEnabled').checked;
   const ptFee = parseFloat(document.getElementById('ePtFee').value||0) || 0;
 
@@ -968,7 +1044,7 @@ document.getElementById('addMemberForm')?.addEventListener('submit', async e => 
     discountValue: dVal,
     discountReason: document.getElementById('dReason').value.trim(),
     admissionFee: admFee,
-    admissionWaived: document.getElementById('mWaive').value==='yes',
+    admissionWaived: document.getElementById('mWaive').value==='no',
     ptEnabled,
     ptFee: ptEnabled?ptFee:0,
     ptTrainer: ptEnabled?document.getElementById('mPtTrainer').value:'',
@@ -999,19 +1075,25 @@ document.getElementById('addMemberForm')?.addEventListener('submit', async e => 
       toast(`${added.name} added!`,'success');
       loadDashboard();
       loadAllMembers();
-      
-      openPaymentFor({
-        id: added._id,
-        name: added.name,
-        plan: added.plan,
-        expiryDate: added.expiryDate,
-        planPrice: added.planPrice,
-        ptEnabled: added.ptEnabled,
-        ptFee: added.ptFee,
-        admissionFee: added.admissionFee,
-        admissionWaived: added.admissionWaived,
-        paymentDate: paymentDate
-      }, true);
+
+      // Trial members are added just for identification — no payment expected,
+      // so skip forcing the payment modal open for them.
+      if (data.status === 'Trial') {
+        // done — nothing further needed for a trial signup
+      } else {
+        openPaymentFor({
+          id: added._id,
+          name: added.name,
+          plan: added.plan,
+          expiryDate: added.expiryDate,
+          planPrice: added.planPrice,
+          ptEnabled: added.ptEnabled,
+          ptFee: added.ptFee,
+          admissionFee: added.admissionFee,
+          admissionWaived: added.admissionWaived,
+          paymentDate: paymentDate
+        }, true);
+      }
     }else{
       const err=await res.json(); toast(err.error||'Could not add member','error');
     }
@@ -1021,10 +1103,7 @@ document.getElementById('addMemberForm')?.addEventListener('submit', async e => 
 
 /* ── PHOTO COMPRESSION ──────────────────────────────────────────
    Every photo captured or uploaded is resized + re-encoded as a small
-   JPEG before it's ever stored in photoData/ePhotoData. This is what
-   keeps each member record small (previously: full-resolution camera
-   photos, several MB each, were stored raw as base64).
-   Target: ~20-24 KB per photo. */
+   JPEG before it's ever stored in photoData/ePhotoData. Target: ~20-24 KB. */
 function compressPhotoDataUrl(dataUrl, maxDim = 320, targetBytes = 24000) {
   return new Promise((resolve) => {
     const img = new Image();
@@ -1035,11 +1114,9 @@ function compressPhotoDataUrl(dataUrl, maxDim = 320, targetBytes = 24000) {
       } else if (height >= width && height > maxDim) {
         width = Math.round(width * (maxDim / height)); height = maxDim;
       }
-
       const c = document.createElement('canvas');
       c.width = width; c.height = height;
       c.getContext('2d').drawImage(img, 0, 0, width, height);
-
       let quality = 0.7;
       let out = c.toDataURL('image/jpeg', quality);
       let bytes = Math.round(out.length * 0.75);
@@ -1050,8 +1127,6 @@ function compressPhotoDataUrl(dataUrl, maxDim = 320, targetBytes = 24000) {
         bytes = Math.round(out.length * 0.75);
         attempts++;
       }
-
-      // Still too big even at floor quality? Shrink dimensions once more.
       if (bytes > targetBytes && (width > 160 || height > 160)) {
         const c2 = document.createElement('canvas');
         c2.width = Math.round(width * 0.7);
@@ -1059,10 +1134,9 @@ function compressPhotoDataUrl(dataUrl, maxDim = 320, targetBytes = 24000) {
         c2.getContext('2d').drawImage(c, 0, 0, c2.width, c2.height);
         out = c2.toDataURL('image/jpeg', 0.6);
       }
-
       resolve(out);
     };
-    img.onerror = () => resolve(dataUrl); // fallback: keep original if decode fails
+    img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
 }
@@ -1919,6 +1993,31 @@ async function loadPayments() {
     in14Days.setDate(today.getDate() + 14);
     in14Days.setHours(23,59,59,999);
 
+    // ── Pending balances: members who paid less than the full amount ──
+    const pendingMembers = members.filter(m => Number(m.pendingAmount) > 0);
+    let pendingHtml = '';
+    if (pendingMembers.length) {
+      pendingHtml = `
+      <div style="margin-bottom:18px">
+        <div style="font-size:.72rem;font-weight:800;color:#E74C3C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">⚠️ Pending Payments (${pendingMembers.length})</div>
+        ${pendingMembers.map(m => {
+          const safePhone_p = esc(m.phone||'');
+          const safeId_p = esc(String(m._id||''));
+          const safeName_p = esc(m.name||'');
+          return `
+          <div class="pay-row" style="border:1.5px solid #FEECEB;background:#FFFBFB;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:12px">${avImg(m)}<div><div style="font-weight:700;font-size:.85rem">${safeName_p}</div><div style="font-size:.72rem;color:var(--tx3)">${esc(m.plan||'')}</div></div></div>
+            <span class="badge" style="background:#FEECEB;color:#E74C3C;font-weight:800">Due ₹${Number(m.pendingAmount).toLocaleString('en-IN')}</span>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="btn btn-sm" style="background:#E3F2FD;color:#2980B9" onclick="dialPhone('${safePhone_p}')" title="Call">📞</button>
+              <button class="btn btn-sm" style="background:#FEF6E7;color:#F39C12" onclick="sendPaymentReminder('${safeId_p}','${safePhone_p}','${safeName_p}')" title="Send reminder">🔔</button>
+              <button class="btn btn-success btn-sm" onclick="openCollectDue('${safeId_p}')">💰 Receive</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
     const due = members.filter(m => {
       if(m.status !== 'Active') return false;
       const p = m.expiryDate.split('T')[0].split('-');
@@ -1928,20 +2027,29 @@ async function loadPayments() {
 
     due.sort((a,b) => new Date(a.expiryDate) - new Date(b.expiryDate));
 
-    if(!due.length){
+    if(!due.length && !pendingMembers.length){
       container.innerHTML = '<div class="empty"><div class="ei">✅</div><p>No payments due in 14 days!</p></div>';
       return;
     }
-    container.innerHTML = due.map(m => {
+    if (!due.length) {
+      container.innerHTML = pendingHtml + '<div class="empty"><div class="ei">✅</div><p>No renewals due in 14 days!</p></div>';
+      return;
+    }
+    container.innerHTML = pendingHtml + due.map(m => {
       const p = m.expiryDate.split('T')[0].split('-');
       const expDate = new Date(p[0], p[1]-1, p[2]);
       const d = Math.ceil((expDate - today)/86400000);
-      return `<div class="pay-row">
+      const safePhone_r = esc(m.phone||'');
+      const safeId_r = esc(String(m._id||''));
+      const safeName_r = esc(String(m.name||''));
+      return `<div class="pay-row" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:12px">${avImg(m)}<div><div style="font-weight:700;font-size:.85rem">${esc(m.name)}</div><div style="font-size:.72rem;color:var(--tx3)">${esc(m.plan)}</div><div style="font-size:.7rem;color:var(--tx3)">Exp: ${fmt(m.expiryDate)}</div></div></div>
         <span class="badge ${d<0?'b-inactive':'b-trial'}">${d<0?'Overdue':d+'d'}</span>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="btn btn-success btn-sm" onclick="openPaymentForById('${esc(String(m._id||''))}')">Renew</button>
-          <button class="btn btn-sm" style="background:#FFF0F0;color:#E74C3C" onclick="delMember('${esc(String(m._id||''))}','${esc(String(m.name||'').replace(/'/g,"\\'"))}')">🗑️</button>
+          <button class="btn btn-sm" style="background:#E3F2FD;color:#2980B9" onclick="dialPhone('${safePhone_r}')" title="Call">📞</button>
+          <button class="btn btn-sm" style="background:#FEF6E7;color:#F39C12" onclick="sendPaymentReminder('${safeId_r}','${safePhone_r}','${safeName_r}')" title="Send reminder">🔔</button>
+          <button class="btn btn-success btn-sm" onclick="openPaymentForById('${safeId_r}')">Renew</button>
+          <button class="btn btn-sm" style="background:#FFF0F0;color:#E74C3C" onclick="delMember('${safeId_r}','${safeName_r.replace(/'/g,"\\'")}')">🗑️</button>
         </div>
       </div>`;
     }).join('');
@@ -1952,9 +2060,25 @@ async function loadPayments() {
 
 /* ── REVENUE PAGE ── */
 let _revenueSearchQuery = '';
+let _revenueFromDate = '';
+let _revenueToDate = '';
 
 function filterRevenue() {
   _revenueSearchQuery = (document.getElementById('revenueSearch')?.value || '').toLowerCase().trim();
+  loadRevenuePage();
+}
+
+function applyRevenueDateFilter() {
+  _revenueFromDate = document.getElementById('revenueFromDate')?.value || '';
+  _revenueToDate = document.getElementById('revenueToDate')?.value || '';
+  loadRevenuePage();
+}
+
+function clearRevenueDateFilter() {
+  _revenueFromDate = '';
+  _revenueToDate = '';
+  const f = document.getElementById('revenueFromDate'); if (f) f.value = '';
+  const t = document.getElementById('revenueToDate'); if (t) t.value = '';
   loadRevenuePage();
 }
 
@@ -1969,7 +2093,38 @@ async function loadRevenuePage() {
       ? allMembers.filter(m => (m.name||'').toLowerCase().includes(_revenueSearchQuery) || String(m.memberNo||'').includes(_revenueSearchQuery))
       : allMembers;
     const revenue = calculateRevenue(members);
-    
+
+    // Custom date-range filter (From/To), independent of the fixed 3-month view below
+    let rangeHtml = '';
+    if (_revenueFromDate || _revenueToDate) {
+      const range = getRevenueInRange(members, _revenueFromDate, _revenueToDate);
+      const label = _revenueFromDate && _revenueToDate
+        ? `${new Date(_revenueFromDate).toLocaleDateString('en-IN')} — ${new Date(_revenueToDate).toLocaleDateString('en-IN')}`
+        : _revenueFromDate ? `From ${new Date(_revenueFromDate).toLocaleDateString('en-IN')}`
+        : `Up to ${new Date(_revenueToDate).toLocaleDateString('en-IN')}`;
+      rangeHtml = `
+      <div style="background:#F0F5F5;border:2px solid #1A8C8C;border-radius:14px;padding:14px;margin-bottom:16px">
+        <div style="font-size:.65rem;font-weight:800;color:#1A8C8C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📅 ${label}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center">
+          <div>
+            <div style="font-size:.6rem;color:#8AABAB;font-weight:700">Total</div>
+            <div style="font-size:1.15rem;font-weight:800;color:#1A2E2E">₹${range.total.toLocaleString('en-IN')}</div>
+          </div>
+          <div>
+            <div style="font-size:.6rem;color:#8AABAB;font-weight:700">📱 Online</div>
+            <div style="font-size:1rem;font-weight:800;color:#1A2E2E">₹${range.online.toLocaleString('en-IN')}</div>
+          </div>
+          <div>
+            <div style="font-size:.6rem;color:#8AABAB;font-weight:700">💵 Cash</div>
+            <div style="font-size:1rem;font-weight:800;color:#1A2E2E">₹${range.cash.toLocaleString('en-IN')}</div>
+          </div>
+        </div>
+        <div style="font-size:.62rem;color:#4A6464;font-weight:600;margin-top:8px;text-align:center">
+          Plan: ₹${range.plan.toLocaleString('en-IN')} | PT: ₹${range.pt.toLocaleString('en-IN')} | Admission: ₹${range.admission.toLocaleString('en-IN')} · ${range.entries.length} payment${range.entries.length===1?'':'s'}
+        </div>
+      </div>`;
+    }
+
     const today = new Date();
     const monthLabels = [];
     for (let i = 0; i < 3; i++) {
@@ -1983,6 +2138,7 @@ async function loadRevenuePage() {
     }
 
     let html = `
+      ${rangeHtml}
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
         ${monthKeys.map((key, idx) => {
           const data = revenue.months[key] || { total: 0, plan: 0, admission: 0, pt: 0, online: 0, cash: 0 };
@@ -2056,6 +2212,70 @@ function openPaymentForById(id) {
   const m = allMembersCache.find(x => (x._id||x.id) === id);
   if (!m) { toast('Member not found - please refresh','error'); return; }
   openPaymentFor(m, false);
+}
+
+/* "💰 Receive" — collects some or all of a member's outstanding pending
+   balance. Reuses the payment modal in a minimal mode (no plan/PT/discount
+   fields), fixed total = their current pendingAmount. */
+function openCollectDue(id) {
+  const m = allMembersCache.find(x => (x._id||x.id) === id);
+  if (!m) { toast('Member not found - please refresh','error'); return; }
+  const due = Number(m.pendingAmount) || 0;
+  if (due <= 0) { toast('This member has no pending balance','error'); return; }
+
+  curPayMember = { id: m._id || m.id, name: m.name, expiryDate: m.expiryDate, isNew: false, mode: 'due', originalData: m };
+
+  const mhdr = document.querySelector('#paymentModal .mhdr .mtitle');
+  if (mhdr) mhdr.textContent = '💰 Collect Pending Payment';
+
+  const planRow = document.getElementById('payPlanRow');
+  const ptBox = document.getElementById('payPtEnabled')?.closest('.pt-box');
+  const datesRow = document.getElementById('payDatesRow');
+  const payDiscBox = document.getElementById('payDiscBox');
+  if (planRow) planRow.style.display = 'none';
+  if (ptBox) ptBox.style.display = 'none';
+  if (datesRow) datesRow.style.display = 'none';
+  if (payDiscBox) payDiscBox.style.display = 'none';
+
+  const payDateEl = document.getElementById('payRenewalPayDate');
+  if (payDateEl) payDateEl.value = getLocalTodayStr();
+
+  curPayTotal = due;
+  const infoEl = document.getElementById('payInfo');
+  if (infoEl) {
+    infoEl.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r3);padding:12px;margin-bottom:.6rem">
+      <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+        <span style="color:var(--tx2);font-size:.82rem">Member</span>
+        <strong style="font-size:.82rem">${esc(m.name)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1.5px solid var(--border);margin-top:6px">
+        <span style="font-weight:800;font-size:.88rem">Pending Balance</span>
+        <strong style="color:#E74C3C;font-size:1.05rem">₹${due.toLocaleString('en-IN')}</strong>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+        <label style="font-size:.7rem;font-weight:800;color:#1A8C8C;display:block;margin-bottom:5px">💰 Amount Received Now</label>
+        <input type="number" id="payAmountReceived" value="${due}" min="0" max="${due}" step="1"
+          oninput="updatePendingDisplay(${due})"
+          style="width:100%;padding:9px 10px;border:2px solid #E0ECEC;border-radius:10px;font-family:inherit;font-size:.9rem;font-weight:700">
+        <div id="pendingDisplayRow" style="font-size:.75rem;font-weight:700;color:#27AE60;margin-top:5px">✅ Fully paid — no pending balance</div>
+      </div>
+    </div>`;
+  }
+
+  curPayMethod = null;
+  ['Upi','Cash','Card'].forEach(n => {
+    const btn = document.getElementById(`pm${n}`);
+    if (!btn) return;
+    btn.style.borderColor = '#E0ECEC'; btn.style.background = '#fff'; btn.style.color = '#4A6464';
+  });
+  ['payUpiPanel','payCashPanel','payCardPanel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const confirmBtn = document.getElementById('confirmPayBtn');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.style.opacity = '.5'; confirmBtn.textContent = 'Select a payment method above'; }
+
+  openModal('paymentModal');
 }
 
 function openPaymentFor(m, isNew = false) {
@@ -2207,6 +2427,21 @@ function selectPayMethod(method) {
   }
 }
 
+function updatePendingDisplay(total) {
+  const input = document.getElementById('payAmountReceived');
+  const row = document.getElementById('pendingDisplayRow');
+  if (!input || !row) return;
+  const received = Math.max(0, Math.min(total, parseFloat(input.value) || 0));
+  const pending = Math.max(0, total - received);
+  if (pending > 0) {
+    row.innerHTML = `⚠️ <strong>₹${pending.toLocaleString('en-IN')} pending</strong> — will be tracked as a due balance on this member`;
+    row.style.color = '#E74C3C';
+  } else {
+    row.textContent = '✅ Fully paid — no pending balance';
+    row.style.color = '#27AE60';
+  }
+}
+
 function recalcPayment() {
   if (!curPayMember) return;
   const isNew = curPayMember.isNew;
@@ -2275,6 +2510,16 @@ function recalcPayment() {
     <strong style="color:var(--g);font-size:1.05rem">₹${total.toLocaleString('en-IN')}</strong>
   </div>`;
 
+  // Amount actually received now — lets staff record a partial/half payment.
+  // Anything less than "Total" becomes a tracked pending balance on the member.
+  rows += `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+    <label style="font-size:.7rem;font-weight:800;color:#1A8C8C;display:block;margin-bottom:5px">💰 Amount Received Now</label>
+    <input type="number" id="payAmountReceived" value="${total}" min="0" max="${total}" step="1"
+      oninput="updatePendingDisplay(${total})"
+      style="width:100%;padding:9px 10px;border:2px solid #E0ECEC;border-radius:10px;font-family:inherit;font-size:.9rem;font-weight:700">
+    <div id="pendingDisplayRow" style="font-size:.75rem;font-weight:700;color:#27AE60;margin-top:5px">✅ Fully paid — no pending balance</div>
+  </div>`;
+
   const infoEl = document.getElementById('payInfo');
   if (infoEl) {
     infoEl.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r3);padding:12px;margin-bottom:.6rem">${rows}</div>`;
@@ -2319,6 +2564,56 @@ async function confirmPayment() {
   const total = curPayTotal || 0;
   const paymentDate = document.getElementById('payRenewalPayDate')?.value || getLocalTodayStr();
 
+  // ── Collecting a pending/due balance (not a new payment or renewal) ──
+  if (curPayMember.mode === 'due') {
+    const received = Math.max(0, Math.min(total, parseFloat(document.getElementById('payAmountReceived')?.value) || total));
+    const remainingDue = Math.max(0, total - received);
+
+    const btn = document.getElementById('confirmPayBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
+    try {
+      const cached = allMembersCache.find(x => (x._id||x.id) === curPayMember.id) || {};
+      const entry = {
+        amount: received,
+        date: new Date(paymentDate),
+        method: method,
+        receiptNo: 'REC-DUE-' + Date.now(),
+        type: 'due_payment'
+      };
+      const updatedHistory = [...(cached.paymentHistory || []), entry];
+
+      const res = await fetch(`${API}/${curPayMember.id}`, {
+        method: 'PUT', headers: hdrs(),
+        body: JSON.stringify({
+          pendingAmount: remainingDue,
+          lastPaymentDate: new Date(paymentDate),
+          lastPaymentMethod: method,
+          lastPaymentAmount: received,
+          paymentHistory: updatedHistory
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({}));
+        throw new Error(err.error || `Server error ${res.status}`);
+      }
+
+      const methodLabel = { upi:'📱 UPI', cash:'💵 Cash', card:'💳 Card' }[method] || method;
+      toast(remainingDue > 0
+        ? `✅ ${methodLabel} ₹${received.toLocaleString('en-IN')} received — ₹${remainingDue.toLocaleString('en-IN')} still pending`
+        : `✅ ${methodLabel} ₹${received.toLocaleString('en-IN')} received — fully paid!`, 'success');
+
+      closeModal('paymentModal');
+      const dueName = curPayMember.name, dueId = curPayMember.id;
+      curPayMember = null; curPayMethod = null;
+      loadDashboard(); loadAllMembers(); loadPayments();
+      shareReceiptFor(dueId, dueName, received, remainingDue, method, entry.receiptNo);
+    } catch (e) {
+      toast(`❌ ${e.message || 'Network error — check connection'}`, 'error');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Confirm Payment'; }
+    return;
+  }
+
   if (curPayMember.isNew) {
     const m = curPayMember.originalData;
     // FIX: Use explicit stored field values (not derived from total) to guarantee
@@ -2327,36 +2622,55 @@ async function confirmPayment() {
     const ptAmt   = (m.ptEnabled && m.ptFee > 0) ? (Number(m.ptFee) || 0) : 0;
     const planAmt = (Number(m.planPrice) > 0) ? Number(m.planPrice) : Math.max(0, total - admAmt - ptAmt);
 
-    const payEntry = {
-      amount: planAmt,
-      date: new Date(paymentDate),
-      method: method,
-      receiptNo: 'REC-' + Date.now(),
-      type: 'plan'
-    };
+    const receivedNew = Math.max(0, Math.min(total, parseFloat(document.getElementById('payAmountReceived')?.value) || total));
+    const pendingNew = Math.max(0, total - receivedNew);
 
-    const entries = [payEntry];
-    if (admAmt > 0) {
-      entries.push({
-        amount: admAmt,
+    // IMPORTANT: only log what was actually collected. Logging the full
+    // plan/admission/pt breakdown here AND the pending balance when it's
+    // collected later double-counts revenue (charged amount + later
+    // collection both getting summed as "received"). Full payment keeps
+    // the itemised breakdown; a partial payment logs one entry for the
+    // real amount received, and pendingAmount tracks the rest.
+    let entries;
+    if (pendingNew > 0) {
+      entries = [{
+        amount: receivedNew,
         date: new Date(paymentDate),
         method: method,
-        receiptNo: 'REC-ADM-' + Date.now(),
-        type: 'admission'
-      });
-    }
-    if (ptAmt > 0) {
-      entries.push({
-        amount: ptAmt,
+        receiptNo: 'REC-' + Date.now(),
+        type: 'plan'
+      }];
+    } else {
+      entries = [{
+        amount: planAmt,
         date: new Date(paymentDate),
         method: method,
-        receiptNo: 'REC-PT-' + Date.now(),
-        type: 'pt'
-      });
+        receiptNo: 'REC-' + Date.now(),
+        type: 'plan'
+      }];
+      if (admAmt > 0) {
+        entries.push({
+          amount: admAmt,
+          date: new Date(paymentDate),
+          method: method,
+          receiptNo: 'REC-ADM-' + Date.now(),
+          type: 'admission'
+        });
+      }
+      if (ptAmt > 0) {
+        entries.push({
+          amount: ptAmt,
+          date: new Date(paymentDate),
+          method: method,
+          receiptNo: 'REC-PT-' + Date.now(),
+          type: 'pt'
+        });
+      }
     }
 
     const btn = document.getElementById('confirmPayBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
+    let addedMemberForReceipt = null;
     try {
       await fetch(`${API}/${curPayMember.id}`, {
         method: 'PUT', headers: hdrs(),
@@ -2364,11 +2678,15 @@ async function confirmPayment() {
           paymentHistory: entries,
           lastPaymentDate: new Date(paymentDate),
           lastPaymentMethod: method,
-          lastPaymentAmount: total
+          lastPaymentAmount: receivedNew,
+          pendingAmount: pendingNew
         })
       });
       const methodLabel = { upi:'📱 UPI', cash:'💵 Cash', card:'💳 Card' }[method] || method;
-      toast(`✅ Member added — ${methodLabel} payment confirmed!`, 'success');
+      toast(pendingNew > 0
+        ? `✅ Member added — ${methodLabel} ₹${receivedNew.toLocaleString('en-IN')} received, ₹${pendingNew.toLocaleString('en-IN')} pending`
+        : `✅ Member added — ${methodLabel} payment confirmed!`, 'success');
+      addedMemberForReceipt = { name: curPayMember.name, id: curPayMember.id };
     } catch(e) {
       toast('Member added but payment record failed', 'error');
     }
@@ -2376,6 +2694,7 @@ async function confirmPayment() {
     curPayMember = null; curPayMethod = null;
     loadDashboard(); loadAllMembers();
     if (btn) { btn.disabled = false; btn.textContent = '✅ Confirm Payment'; }
+    if (addedMemberForReceipt) shareReceiptFor(addedMemberForReceipt.id, addedMemberForReceipt.name, receivedNew, pendingNew, method, entries[0]?.receiptNo);
     return;
   }
 
@@ -2408,24 +2727,35 @@ async function confirmPayment() {
   // that gets pushed separately below (previously double-counted PT).
   const planAmt = Math.max(0, total - (isPt ? ptAmt : 0));
 
-  const payEntry = {
-    amount: planAmt,
-    date: chosenPayDate,
-    method: method,
-    receiptNo: 'REC-' + Date.now(),
-    type: 'plan'
-  };
-
   const btn = document.getElementById('confirmPayBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
 
-  try {
-    // Use cache for existing history - avoids extra network round-trip and the
-    // HTML-response bug that occurred because GET /api/members/:id did not exist.
-    const cached = allMembersCache.find(x => (x._id||x.id) === curPayMember.id) || {};
-    const renewHistory = [...(cached.paymentHistory || []), payEntry];
+  const receivedRenew = Math.max(0, Math.min(total, parseFloat(document.getElementById('payAmountReceived')?.value) || total));
+  const pendingRenew = Math.max(0, total - receivedRenew);
+
+  // Same fix as the new-member flow: a full payment logs the itemised
+  // plan/PT breakdown; a partial payment logs one entry for the real
+  // amount received (avoids double-counting once the rest is collected
+  // later via "Receive").
+  let renewEntries;
+  if (pendingRenew > 0) {
+    renewEntries = [{
+      amount: receivedRenew,
+      date: chosenPayDate,
+      method: method,
+      receiptNo: 'REC-' + Date.now(),
+      type: 'plan'
+    }];
+  } else {
+    renewEntries = [{
+      amount: planAmt,
+      date: chosenPayDate,
+      method: method,
+      receiptNo: 'REC-' + Date.now(),
+      type: 'plan'
+    }];
     if (isPt && ptAmt > 0) {
-      renewHistory.push({
+      renewEntries.push({
         amount: ptAmt,
         date: chosenPayDate,
         method: method,
@@ -2433,6 +2763,13 @@ async function confirmPayment() {
         type: 'pt'
       });
     }
+  }
+
+  try {
+    // Use cache for existing history - avoids extra network round-trip and the
+    // HTML-response bug that occurred because GET /api/members/:id did not exist.
+    const cached = allMembersCache.find(x => (x._id||x.id) === curPayMember.id) || {};
+    const renewHistory = [...(cached.paymentHistory || []), ...renewEntries];
 
     const res = await fetch(`${API}/${curPayMember.id}`, {
       method: 'PUT', headers: hdrs(),
@@ -2449,7 +2786,8 @@ async function confirmPayment() {
         status: 'Active',
         lastPaymentDate: chosenPayDate,
         lastPaymentMethod: method,
-        lastPaymentAmount: total,
+        lastPaymentAmount: receivedRenew,
+        pendingAmount: pendingRenew,
         paymentHistory: renewHistory
       })
     });
@@ -2462,10 +2800,14 @@ async function confirmPayment() {
 
     const methodLabel = { upi:'📱 UPI', cash:'💵 Cash', card:'💳 Card' }[method] || method;
     const expiryDisplay = new Date(newExpiry).toLocaleDateString('en-IN');
-    toast(`✅ ${methodLabel} — Renewed until ${expiryDisplay}`, 'success');
+    toast(pendingRenew > 0
+      ? `✅ Renewed until ${expiryDisplay} — ₹${pendingRenew.toLocaleString('en-IN')} still pending`
+      : `✅ ${methodLabel} — Renewed until ${expiryDisplay}`, 'success');
     closeModal('paymentModal');
+    const renewedName = curPayMember.name, renewedId = curPayMember.id;
     curPayMember = null; curPayMethod = null;
     loadDashboard(); loadPayments(); loadAllMembers();
+    shareReceiptFor(renewedId, renewedName, receivedRenew, pendingRenew, method, renewEntries[0]?.receiptNo);
   } catch(e) {
     toast(`❌ ${e.message || 'Network error — check connection'}`, 'error');
     if (btn) { btn.disabled = false; btn.textContent = '✅ Confirm Payment'; }
@@ -2643,7 +2985,7 @@ async function sendAttendanceReport(memberId, phone, name) {
     const daysStr = presentDays.sort((a,b)=>a-b).join(', ') || 'No records yet';
 
     const msg =
-`*🏋️ GymPro Attendance Report*
+`*🏋️ ${getGymName()} Attendance Report*
 Member: *${name}*
 Month: *${monthName}*
 
@@ -2652,7 +2994,7 @@ Month: *${monthName}*
 ❌ Absent: *${absent >= 0 ? absent : 0} day${absent!==1?'s':''}*
 
 Keep pushing! 💪
-- GymPro Management`;
+- ${getGymName()} Management`;
 
     const clean = String(phone).replace(/[^0-9]/g, '');
     const num = clean.startsWith('91') ? clean : '91' + clean;
@@ -2667,6 +3009,56 @@ Keep pushing! 💪
 /* ══════════════════════════════════════════════════════════════
    PAYMENT REMINDER  -  renewal reminder via WhatsApp
 ══════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════
+   RECEIPT SHARING  -  sends a payment receipt to the member via WhatsApp
+══════════════════════════════════════════════════════════════ */
+function shareReceiptFor(memberId, name, amountReceived, pendingAmount, method, receiptNo) {
+  try {
+    const m = allMembersCache.find(x => (x._id||x.id) === memberId);
+    const phone = m?.phone;
+    if (!phone) return; // no phone on file, skip silently
+    const methodLabel = { upi:'📱 UPI', cash:'💵 Cash', card:'💳 Card' }[method] || (method || 'Cash');
+    const dateStr = new Date().toLocaleDateString('en-IN');
+
+    let msg =
+`🧾 *${getGymName()} — Payment Receipt*
+
+Hi *${name}*,
+Thank you for your payment!
+
+Receipt No: *${receiptNo || 'REC-' + Date.now()}*
+Date: *${dateStr}*
+Amount Received: *₹${Number(amountReceived).toLocaleString('en-IN')}*
+Method: *${methodLabel}*`;
+
+    if (pendingAmount > 0) {
+      msg += `\n\n⚠️ *Pending Balance: ₹${Number(pendingAmount).toLocaleString('en-IN')}*\nPlease clear this at your earliest convenience.`;
+    } else {
+      msg += `\n\n✅ *Fully Paid*`;
+    }
+
+    msg += `\n\n- ${getGymName()} Management`;
+
+    const clean = String(phone).replace(/[^0-9]/g, '');
+    const num = clean.startsWith('91') ? clean : '91' + clean;
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+  } catch (e) {
+    console.error('Receipt share failed', e);
+  }
+}
+
+/* Manually re-share the receipt for a member's most recent payment
+   (e.g. from a "📄 Receipt" button on their card). */
+function shareLastReceipt(memberId) {
+  const m = allMembersCache.find(x => (x._id||x.id) === memberId);
+  if (!m || !m.paymentHistory || !m.paymentHistory.length) {
+    toast('No payment history to share yet', 'error');
+    return;
+  }
+  const last = [...m.paymentHistory].sort((a,b) => new Date(b.date) - new Date(a.date))[0];
+  shareReceiptFor(memberId, m.name, last.amount, m.pendingAmount || 0, last.method, last.receiptNo);
+}
+
 async function sendPaymentReminder(memberId, phone, name) {
   try {
     const m = allMembersCache.find(x => (x._id||x.id) === memberId) || {};
@@ -2685,7 +3077,7 @@ async function sendPaymentReminder(memberId, phone, name) {
     }
 
     const msg =
-`🏋️ *GymPro Membership Reminder*
+`🏋️ *${getGymName()} Membership Reminder*
 
 Hi *${name}*,
 ${urgencyLine}
@@ -2696,7 +3088,7 @@ ${urgencyLine}
 Please renew your membership to continue your fitness journey without interruption. 💪
 
 Contact us to renew today!
-- GymPro Management`;
+- ${getGymName()} Management`;
 
     const clean = String(phone).replace(/[^0-9]/g, '');
     const num = clean.startsWith('91') ? clean : '91' + clean;
